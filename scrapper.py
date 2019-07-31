@@ -14,29 +14,41 @@ async def req_intercept(req: Request):
     req.headers.update({'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7,de;q=0.6'})
 
     global page
-    global hasFetched
+    global trip
     cookies = await page.cookies()
 
-    if cookies and not hasFetched:
-        hasFetched = True
-        form = Trip().data()
+    if cookies and not trip.hasFetchedStep1:
         token = filter(lambda x: x['name'] == '__RequestVerificationToken', cookies)
-        form["__RequestVerificationToken"] = list(token)[0]['value']
-
+        trip.setstep1()
+        trip.settoken(list(token)[0]['value'])
         req.headers.update({'content-type': 'application/x-www-form-urlencoded'})
         await req.continue_(overrides={'method': 'POST',
                                        'headers': req.headers,
                                        'url': 'https://www.transavia.com/fr-FR/reservez-un-vol/vols/deeplink',
-                                       'postData': urllib.parse.urlencode(form)})
+                                       'postData': urllib.parse.urlencode(trip.data())})
+
+    elif trip.hasResponseStep1 and not trip.hasFetchedStep2:
+        trip.setstep2()
+        req.headers.update({'content-type': 'application/x-www-form-urlencoded'})
+        req.headers.update({'referer': 'https://www.transavia.com/fr-FR/reservez-un-vol/vols/rechercher/'})
+        req.headers.update({'X-Requested-With': 'XMLHttpRequest'})
+        req.headers.update({'accept': '*/*'})
+        await req.continue_(overrides={'method': 'POST',
+                                       'headers': req.headers,
+                                       'url': 'https://www.transavia.com/fr-FR/reservez-un-vol/vols'
+                                              '/SingleDayAvailability/',
+                                       'postData': urllib.parse.urlencode(trip.availdataoutbound())})
     else:
-        await req.continue_(overrides={ 'headers': req.headers})
+        await req.continue_(overrides={'headers': req.headers})
 
 
 async def resp_intercept(resp: Response):
-    print(f"New header: {resp.request.headers}")
+    # text = await resp.text();
+    print(resp.url)
+    global trip
+    if resp.url == 'https://www.transavia.com/fr-FR/reservez-un-vol/vols/rechercher/':
+        trip.sethasresponsestep1()
 
-    text = await resp.text();
-    print(text)
 
 
 async def main():
@@ -52,11 +64,14 @@ async def main():
     await page.setRequestInterception(True)
     page.on('request', req_intercept)
     page.on('response', resp_intercept)
-    resp = await page.goto('https://www.transavia.com/fr-FR/accueil')
+    resp = await page.goto('https://www.transavia.com/fr-FR/accueil',{
+                'waitUntil': 'networkidle2',
+                'timeout': 3000000
+            })
 
 
 global page
-global hasFetched
-hasFetched = False
+global trip
+trip = Trip()
 page = None
 asyncio.get_event_loop().run_until_complete(main())
